@@ -1,0 +1,46 @@
+services:
+  backend:
+    build: ./backend
+    command: uvicorn src.app:app --host 0.0.0.0 --reload --port 8000
+    container_name: backend
+    volumes:
+      - ./backend:/backend
+    env_file: ".env.dev"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - backend-db
+
+  backend-worker:
+    build: ./backend
+    command: [ 'celery', '-A', 'src.tasks.celery_app', 'worker', '-l', 'info' ]
+    container_name: backend-worker
+    env_file: ".env.dev"
+    volumes:
+      - ./backend:/backend
+    depends_on:
+      - backend-db
+
+  backend-db:
+    image: postgres:latest
+    container_name: backend-db
+    ports:
+      - "5433:5433"
+    env_file: ".env.dev"
+    volumes:
+      - backend-db-volume:/var/lib/postgresql
+
+  backend-redis:
+    image: redis:latest
+    container_name: backend-redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "3000:3000"
+
+volumes:
+  backend-db-volume:
