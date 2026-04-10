@@ -1,13 +1,13 @@
 import io
 import pytest
+from unittest.mock import patch
 
 from src.tasks import _scan_file_for_threats, _extract_file_metadata, _send_file_alert
 from src.service import get_file, create_alert
-import src.service as service_module
 
 
 @pytest.mark.asyncio
-async def test_scan_clean_file(client, tmp_path):
+async def test_scan_clean_file(client):
     upload = await client.post(
         "/files",
         data={"title": "Clean"},
@@ -15,7 +15,10 @@ async def test_scan_clean_file(client, tmp_path):
     )
     file_id = upload.json()["id"]
 
-    await _scan_file_for_threats(file_id)
+    # Patch .delay so chained tasks don't fire via Celery
+    with patch("src.tasks.extract_file_metadata") as mock_task:
+        mock_task.delay = lambda *a, **kw: None
+        await _scan_file_for_threats(file_id)
 
     file_item = await get_file(file_id)
     assert file_item.scan_status == "clean"
@@ -31,7 +34,9 @@ async def test_scan_suspicious_extension(client):
     )
     file_id = upload.json()["id"]
 
-    await _scan_file_for_threats(file_id)
+    with patch("src.tasks.extract_file_metadata") as mock_task:
+        mock_task.delay = lambda *a, **kw: None
+        await _scan_file_for_threats(file_id)
 
     file_item = await get_file(file_id)
     assert file_item.scan_status == "suspicious"
@@ -40,7 +45,7 @@ async def test_scan_suspicious_extension(client):
 
 
 @pytest.mark.asyncio
-async def test_extract_metadata_text(client, tmp_path):
+async def test_extract_metadata_text(client):
     content = b"line1\nline2\nline3"
     upload = await client.post(
         "/files",
@@ -49,8 +54,13 @@ async def test_extract_metadata_text(client, tmp_path):
     )
     file_id = upload.json()["id"]
 
-    await _scan_file_for_threats(file_id)
-    await _extract_file_metadata(file_id)
+    with patch("src.tasks.extract_file_metadata") as mock_scan_next:
+        mock_scan_next.delay = lambda *a, **kw: None
+        await _scan_file_for_threats(file_id)
+
+    with patch("src.tasks.send_file_alert") as mock_alert:
+        mock_alert.delay = lambda *a, **kw: None
+        await _extract_file_metadata(file_id)
 
     file_item = await get_file(file_id)
     assert file_item.processing_status == "processed"
@@ -59,7 +69,7 @@ async def test_extract_metadata_text(client, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_extract_metadata_missing_file(client, tmp_path, monkeypatch):
+async def test_extract_metadata_missing_file(client, tmp_path):
     upload = await client.post(
         "/files",
         data={"title": "Ghost"},
@@ -67,12 +77,14 @@ async def test_extract_metadata_missing_file(client, tmp_path, monkeypatch):
     )
     file_id = upload.json()["id"]
 
-    # Remove the stored file to simulate missing file
+    # Remove stored file to simulate missing
     import os
     for f in tmp_path.iterdir():
         os.remove(f)
 
-    await _extract_file_metadata(file_id)
+    with patch("src.tasks.send_file_alert") as mock_alert:
+        mock_alert.delay = lambda *a, **kw: None
+        await _extract_file_metadata(file_id)
 
     file_item = await get_file(file_id)
     assert file_item.processing_status == "failed"
@@ -87,8 +99,14 @@ async def test_send_alert_for_clean_file(client):
     )
     file_id = upload.json()["id"]
 
-    await _scan_file_for_threats(file_id)
-    await _extract_file_metadata(file_id)
+    with patch("src.tasks.extract_file_metadata") as m:
+        m.delay = lambda *a, **kw: None
+        await _scan_file_for_threats(file_id)
+
+    with patch("src.tasks.send_file_alert") as m:
+        m.delay = lambda *a, **kw: None
+        await _extract_file_metadata(file_id)
+
     await _send_file_alert(file_id)
 
     alerts_response = await client.get("/alerts")

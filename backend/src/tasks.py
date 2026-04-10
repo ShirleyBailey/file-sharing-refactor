@@ -4,9 +4,13 @@ from pathlib import Path
 
 from celery import Celery
 
-from src.database import async_session_maker
+import src.database as _db
+import src.service as _svc
 from src.models import Alert, StoredFile
-from src.service import STORAGE_DIR
+
+# Module-level references — can be monkeypatched in tests
+async_session_maker = _db.async_session_maker
+STORAGE_DIR = _svc.STORAGE_DIR
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://backend-redis:6379/0")
 
@@ -14,7 +18,8 @@ celery_app = Celery("file_tasks", broker=REDIS_URL, backend=REDIS_URL)
 
 
 async def _scan_file_for_threats(file_id: str) -> None:
-    async with async_session_maker() as session:
+    import src.tasks as _self
+    async with _self.async_session_maker() as session:
         file_item = await session.get(StoredFile, file_id)
         if not file_item:
             return
@@ -41,12 +46,13 @@ async def _scan_file_for_threats(file_id: str) -> None:
 
 
 async def _extract_file_metadata(file_id: str) -> None:
-    async with async_session_maker() as session:
+    import src.tasks as _self
+    async with _self.async_session_maker() as session:
         file_item = await session.get(StoredFile, file_id)
         if not file_item:
             return
 
-        stored_path = STORAGE_DIR / file_item.stored_name
+        stored_path = _self.STORAGE_DIR / file_item.stored_name
         if not stored_path.exists():
             file_item.processing_status = "failed"
             file_item.scan_status = file_item.scan_status or "failed"
@@ -77,7 +83,8 @@ async def _extract_file_metadata(file_id: str) -> None:
 
 
 async def _send_file_alert(file_id: str) -> None:
-    async with async_session_maker() as session:
+    import src.tasks as _self
+    async with _self.async_session_maker() as session:
         file_item = await session.get(StoredFile, file_id)
         if not file_item:
             return
