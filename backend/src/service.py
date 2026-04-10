@@ -1,37 +1,44 @@
 import mimetypes
-import os
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import func, select
 
+from src.database import async_session_maker
 from src.models import Alert, StoredFile
-
+from src.schemas import PagedResponse
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STORAGE_DIR = BASE_DIR / "storage" / "files"
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-DB_URL = (
-    f"postgresql+asyncpg://{os.environ.get('POSTGRES_USER')}:"
-    f"{os.environ.get('POSTGRES_PASSWORD')}@{os.environ.get('POSTGRES_HOST')}:"
-    f"{os.environ.get('PGPORT')}/{os.environ.get('POSTGRES_DB')}"
-)
-engine = create_async_engine(DB_URL)
-async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
+
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
 
 
-async def list_files() -> list[StoredFile]:
+async def list_files(page: int = 1, page_size: int = DEFAULT_PAGE_SIZE) -> PagedResponse[StoredFile]:
+    page_size = min(page_size, MAX_PAGE_SIZE)
+    offset = (page - 1) * page_size
     async with async_session_maker() as session:
-        result = await session.execute(select(StoredFile).order_by(StoredFile.created_at.desc()))
-        return list(result.scalars().all())
+        total = (await session.execute(select(func.count()).select_from(StoredFile))).scalar_one()
+        result = await session.execute(
+            select(StoredFile).order_by(StoredFile.created_at.desc()).offset(offset).limit(page_size)
+        )
+        items = list(result.scalars().all())
+    return PagedResponse(items=items, total=total, page=page, page_size=page_size)
 
 
-async def list_alerts() -> list[Alert]:
+async def list_alerts(page: int = 1, page_size: int = DEFAULT_PAGE_SIZE) -> PagedResponse[Alert]:
+    page_size = min(page_size, MAX_PAGE_SIZE)
+    offset = (page - 1) * page_size
     async with async_session_maker() as session:
-        result = await session.execute(select(Alert).order_by(Alert.created_at.desc()))
-        return list(result.scalars().all())
+        total = (await session.execute(select(func.count()).select_from(Alert))).scalar_one()
+        result = await session.execute(
+            select(Alert).order_by(Alert.created_at.desc()).offset(offset).limit(page_size)
+        )
+        items = list(result.scalars().all())
+    return PagedResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 async def get_file(file_id: str) -> StoredFile:
@@ -90,14 +97,6 @@ async def delete_file(file_id: str) -> None:
             stored_path.unlink()
         await session.delete(file_item)
         await session.commit()
-
-
-async def get_file_path(file_id: str) -> tuple[StoredFile, Path]:
-    file_item = await get_file(file_id)
-    stored_path = STORAGE_DIR / file_item.stored_name
-    if not stored_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored file not found")
-    return file_item, stored_path
 
 
 async def create_alert(file_id: str, level: str, message: str) -> Alert:

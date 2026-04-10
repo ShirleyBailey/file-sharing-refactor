@@ -1,13 +1,22 @@
-from fastapi import FastAPI, HTTPException
-from fastapi import File, Form, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette import status
-from src.schemas import AlertItem, FileItem, FileUpdate
-from src.service import create_file, delete_file, get_file, list_alerts, list_files, update_file, STORAGE_DIR
+
+from src.schemas import AlertItem, FileItem, FileUpdate, PagedResponse
+from src.service import (
+    STORAGE_DIR,
+    create_file,
+    delete_file,
+    get_file,
+    list_alerts,
+    list_files,
+    update_file,
+)
 from src.tasks import scan_file_for_threats
 
-app = FastAPI()
+app = FastAPI(title="File Exchange API")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -20,14 +29,20 @@ app.add_middleware(
 )
 
 
-@app.get("/files", response_model=list[FileItem])
-async def list_files_view():
-    return await list_files()
+@app.get("/files", response_model=PagedResponse[FileItem])
+async def list_files_view(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    return await list_files(page=page, page_size=page_size)
 
 
-@app.get("/alerts", response_model=list[AlertItem])
-async def list_alerts_view():
-    return await list_alerts()
+@app.get("/alerts", response_model=PagedResponse[AlertItem])
+async def list_alerts_view(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    return await list_alerts(page=page, page_size=page_size)
 
 
 @app.post("/files", response_model=FileItem, status_code=201)
@@ -46,10 +61,7 @@ async def get_file_view(file_id: str):
 
 
 @app.patch("/files/{file_id}", response_model=FileItem)
-async def update_file_view(
-    file_id: str,
-    payload: FileUpdate,
-):
+async def update_file_view(file_id: str, payload: FileUpdate):
     return await update_file(file_id=file_id, title=payload.title)
 
 
